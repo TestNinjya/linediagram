@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>線分図＆ホワイトボードメーカー</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    body { font-family: sans-serif; background-color: #f8fafc; }
+    .line-card { background: #fff; border: 2px solid #e2e8f0; border-radius: 1rem; padding: 1.25rem; margin-bottom: 1rem; position: relative; }
+    .track-wrapper { position: relative; margin-top: 4.5rem; margin-bottom: 1.5rem; height: 16px; display: flex; align-items: center; z-index: 20; }
+    .track { position: absolute; left: 0; right: 0; height: 8px; background-color: #0d9488; border-radius: 4px; }
+    .divider { position: absolute; top: 50%; width: 4px; height: 28px; background-color: #2563eb; transform: translateY(-50%); margin-left: -2px; z-index: 25; border-radius: 2px; pointer-events: none; }
+    .handle { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; background-color: #f59e0b; border: 3px solid #fff; border-radius: 50%; cursor: ew-resize; z-index: 35; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+    .seg-label { position: absolute; top: -52px; transform: translateX(-50%); z-index: 30; }
+    #drawCanvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 28; pointer-events: none; cursor: crosshair; }
+    #drawCanvas.active-pen { pointer-events: auto; }
+    canvas { touch-action: none; }
+
+    /* A4用紙1枚にきれいに収めるためのPDF・印刷用スタイル */
+    @media print {
+      @page { size: A4 portrait; margin: 6mm; }
+      body { background-color: #fff !important; padding: 0 !important; font-size: 10pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print, header, button, label, input[type="file"], #loadModal { display: none !important; }
+      .max-w-4xl { max-width: 100% !important; margin: 0 !important; }
+      .space-y-5 > * + * { margin-top: 0.5rem !important; }
+      .line-card { padding: 0.5rem !important; margin-bottom: 0.4rem !important; border-width: 1px !important; break-inside: avoid; }
+      .track-wrapper { margin-top: 2.8rem !important; margin-bottom: 0.8rem !important; }
+      .seg-label { top: -38px !important; }
+      section { padding: 0.5rem !important; margin-bottom: 0.4rem !important; }
+      textarea, input { border: 1px solid #cbd5e1 !important; background: transparent !important; }
+      .handle { display: none !important; }
+    }
+  </style>
+</head>
+<body class="p-4 sm:p-6 text-slate-800">
+
+  <div class="max-w-4xl mx-auto space-y-5">
+
+    <!-- 頁最上部：大きく目立つ操作用コントロールパネル -->
+    <div class="no-print bg-slate-900 text-white p-4 rounded-2xl shadow-lg border border-slate-700 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-cloud-arrow-up text-amber-400 text-xl"></i>
+        <span class="font-bold text-sm sm:text-base">画面メモリー ＆ PDF管理</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+        <!-- 保存ボタン -->
+        <button type="button" onclick="saveToBrowser()" class="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black px-4 py-2.5 rounded-xl text-sm sm:text-base cursor-pointer transition flex items-center gap-2 shadow-md">
+          <i class="fa-solid fa-floppy-disk text-lg"></i>
+          <span>今の画面を保存</span>
+        </button>
+
+        <!-- 読込ボタン -->
+        <button type="button" onclick="openLoadModal()" class="bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black px-4 py-2.5 rounded-xl text-sm sm:text-base cursor-pointer transition flex items-center gap-2 shadow-md">
+          <i class="fa-solid fa-folder-open text-lg"></i>
+          <span>保存した画面を開く</span>
+        </button>
+
+        <!-- PDF保存/印刷ボタン -->
+        <button type="button" onclick="exportToPDF()" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black px-5 py-2.5 rounded-xl text-sm sm:text-base cursor-pointer transition flex items-center gap-2 shadow-md">
+          <i class="fa-solid fa-file-pdf text-xl text-yellow-300"></i>
+          <span>PDF印刷</span>
+        </button>
+
+        <!-- リセットボタン -->
+        <button type="button" onclick="resetAll()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-xl text-xs sm:text-sm cursor-pointer transition flex items-center gap-1.5 border border-rose-500">
+          <i class="fa-solid fa-rotate-left"></i>
+          <span>全リセット</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- タイトルヘッダー -->
+    <header class="flex justify-between items-center bg-teal-800 text-white p-4 rounded-2xl shadow">
+      <h1 class="font-bold text-lg sm:text-xl flex items-center gap-2">
+        <i class="fa-solid fa-ruler-horizontal text-yellow-300"></i> 線分図＆ホワイトボードメーカー
+      </h1>
+      <span class="text-xs bg-teal-900 px-3 py-1 rounded-full text-teal-200 border border-teal-700 no-print">自動計算対応</span>
+    </header>
+
+    <!-- 問題文メモ -->
+    <section class="bg-teal-50 p-4 rounded-2xl border border-teal-200 shadow-sm">
+      <label class="font-bold text-xs text-teal-900 block mb-1">
+        <i class="fa-solid fa-pen-to-square text-teal-700"></i> 問題文メモ
+      </label>
+      <textarea id="problemInput" rows="2" placeholder="問題文を入力..." class="w-full p-2.5 bg-white border border-teal-300 rounded-xl text-sm focus:outline-none focus:border-teal-600"></textarea>
+    </section>
+
+    <!-- メインエディタ -->
+    <div class="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-slate-200 space-y-5">
+      <!-- 総数＆目標値 -->
+      <div class="bg-slate-50 p-4 rounded-xl border flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="font-bold text-sm text-slate-700">全体の総数（合計）:</span>
+          <input type="text" id="autoSumDisplay" readonly value="0" class="w-28 text-center font-bold text-teal-800 text-xl bg-teal-50 border border-teal-300 rounded-lg py-1 shadow-inner">
+          <input type="text" id="unitInput" value="個" oninput="render()" class="w-12 text-center font-bold text-sm bg-white border border-slate-300 rounded-lg py-1 focus:outline-none">
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-xs text-slate-600">目標総数:</span>
+          <input type="number" id="targetTotal" placeholder="例: 120" oninput="checkMatch()" class="w-24 text-center font-bold border border-slate-300 rounded-lg py-1 text-sm focus:outline-none">
+        </div>
+      </div>
+      <div id="matchAlert" class="p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600 border border-slate-200">
+        目標総数を入力すると、合計値と一致しているか判定されます。
+      </div>
+
+      <!-- ペンツール切り替えバー（図形エリア用） -->
+      <div class="bg-amber-50 p-3 rounded-xl border border-amber-200 flex flex-wrap items-center justify-between gap-3 no-print">
+        <div class="flex items-center gap-2">
+          <button id="togglePenBtn" type="button" onclick="togglePenMode()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3.5 py-2 rounded-xl cursor-pointer shadow transition">
+            <i class="fa-solid fa-pen text-yellow-300"></i> 線の上に書き込む（ペンON/OFF）
+          </button>
+          <span id="penStatusBadge" class="text-xs font-bold text-slate-500">（現在：OFF / 区分線や数値を動かせます）</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="setPenColor('#000000')" class="w-5 h-5 rounded-full bg-black border border-white shadow hover:scale-110 cursor-pointer" title="黒"></button>
+          <button type="button" onclick="setPenColor('#ef4444')" class="w-5 h-5 rounded-full bg-red-500 border border-white shadow hover:scale-110 cursor-pointer" title="赤"></button>
+          <button type="button" onclick="setPenColor('#3b82f6')" class="w-5 h-5 rounded-full bg-blue-500 border border-white shadow hover:scale-110 cursor-pointer" title="青"></button>
+          <button type="button" onclick="setPenColor('#22c55e')" class="w-5 h-5 rounded-full bg-green-500 border border-white shadow hover:scale-110 cursor-pointer" title="緑"></button>
+          <button type="button" onclick="toggleEraser()" id="eraserBtn" class="text-xs bg-white px-2 py-1 rounded border border-amber-300 cursor-pointer hover:bg-amber-100">消しゴム</button>
+          <button type="button" onclick="clearCanvas()" class="text-xs bg-rose-100 text-rose-800 hover:bg-rose-200 px-2.5 py-1 rounded border border-rose-300 cursor-pointer">全消去</button>
+        </div>
+      </div>
+
+      <!-- 線分図エディタ ＆ 線の上に重ねる手書きキャンバス -->
+      <div class="relative" id="diagramWrapper">
+        <canvas id="drawCanvas"></canvas>
+        <div class="space-y-4">
+          <div class="flex justify-between items-center border-b pb-2">
+            <h2 class="font-bold text-base text-slate-800">線分リスト</h2>
+            <button type="button" onclick="addBar()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl cursor-pointer no-print shadow">＋ 線を追加</button>
+          </div>
+          <div id="diagramContainer" class="space-y-4"></div>
+        </div>
+      </div>
+
+      <!-- 各項目の答え入力欄 -->
+      <div class="pt-4 border-t border-slate-200 space-y-3">
+        <h3 class="font-bold text-sm text-slate-800">各項目の答え記入</h3>
+        <div id="answerInputsContainer" class="flex flex-wrap gap-3"></div>
+        <button type="button" onclick="checkAnswers()" class="bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer no-print shadow">答えの合計を照合</button>
+        <div id="answerResult" class="hidden p-3 rounded-xl text-xs font-bold"></div>
+      </div>
+    </div>
+
+    <!-- 自由メモスペース -->
+    <section class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+      <div class="flex flex-wrap justify-between items-center gap-2">
+        <h3 class="font-bold text-sm text-slate-700 flex items-center gap-2">
+          <i class="fa-solid fa-note-sticky text-amber-500"></i> 自由メモスペース（計算・途中式など）
+        </h3>
+        <!-- 下部メモ欄専用のコントロールバー -->
+        <div class="flex items-center gap-2 bg-amber-50 p-2 rounded-xl border border-amber-200 no-print">
+          <span class="text-xs font-bold text-amber-900">メモペン色:</span>
+          <button type="button" onclick="setMemoPenColor('#000000')" class="w-5 h-5 rounded-full bg-black border border-white shadow hover:scale-110 cursor-pointer" title="黒"></button>
+          <button type="button" onclick="setMemoPenColor('#ef4444')" class="w-5 h-5 rounded-full bg-red-500 border border-white shadow hover:scale-110 cursor-pointer" title="赤"></button>
+          <button type="button" onclick="setMemoPenColor('#3b82f6')" class="w-5 h-5 rounded-full bg-blue-500 border border-white shadow hover:scale-110 cursor-pointer" title="青"></button>
+          <button type="button" onclick="setMemoPenColor('#22c55e')" class="w-5 h-5 rounded-full bg-green-500 border border-white shadow hover:scale-110 cursor-pointer" title="緑"></button>
+          <button type="button" onclick="toggleMemoEraser()" id="memoEraserBtn" class="text-xs bg-white px-2 py-0.5 rounded border border-amber-300 cursor-pointer hover:bg-amber-100">消しゴム</button>
+          <button type="button" onclick="clearMemoCanvas()" class="text-xs bg-rose-100 text-rose-800 hover:bg-rose-200 px-2.5 py-0.5 rounded border border-rose-300 cursor-pointer">手書き消去</button>
+        </div>
+      </div>
+      <div class="relative bg-amber-50/40 border border-amber-200 rounded-xl overflow-hidden" style="min-height: 200px; resize: vertical; overflow: auto;">
+        <canvas id="memoCanvas" class="absolute inset-0 w-full h-full cursor-crosshair z-10"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <!-- 読み込み用のポップアップ画面（モーダル） -->
+  <div id="loadModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h3 class="font-bold text-lg text-slate-800"><i class="fa-solid fa-folder-open text-indigo-600"></i> 保存した画面の選択</h3>
+        <button type="button" onclick="closeLoadModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg px-2">✕</button>
+      </div>
+      <p class="text-xs text-slate-600">ブラウザに記憶させた保存データのリストです。項目をクリックすると画面に読み込まれます。</p>
+      <div id="savedListContainer" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
+      <div class="flex justify-end pt-2">
+        <button type="button" onclick="closeLoadModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold px-4 py-2 rounded-xl text-xs">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let bars = [
+      { label: "兄", dividers: [], values: [70] },
+      { label: "弟", dividers: [], values: [50] }
+    ];
+    let activeDrag = null;
+    
+    let isPenMode = false;
+    let penColor = '#000000';
+    let isEraser = false;
+
+    let memoPenColor = '#000000';
+    let isMemoEraser = false;
+
+    let canvas, ctx, isDrawing = false;
+    let memoCanvas, memoCtx, isDrawingMemo = false;
+
+    function init() {
+      render();
+      initCanvases();
+    }
+
+    function initCanvases() {
+      canvas = document.getElementById('drawCanvas');
+      if (canvas) {
+        ctx = canvas.getContext('2d');
+        resizeCanvases();
+        setupCanvas(canvas, () => isDrawing, (v) => isDrawing = v, ctx, () => isEraser, () => penColor);
+      }
+
+      memoCanvas = document.getElementById('memoCanvas');
+      if (memoCanvas) {
+        memoCtx = memoCanvas.getContext('2d');
+        resizeCanvases();
+        setupCanvas(memoCanvas, () => isDrawingMemo, (v) => isDrawingMemo = v, memoCtx, () => isMemoEraser, () => memoPenColor);
+      }
+    }
+
+    function resizeCanvases() {
+      if (canvas) {
+        let wrapper = document.getElementById('diagramWrapper');
+        if (wrapper && wrapper.clientWidth > 0) {
+          let tempDrawImg = canvas.toDataURL();
+          canvas.width = wrapper.clientWidth;
+          canvas.height = wrapper.clientHeight;
+          restoreCanvasImage(ctx, canvas, tempDrawImg);
+        }
+      }
+      if (memoCanvas && memoCanvas.parentElement) {
+        let rect = memoCanvas.parentElement.getBoundingClientRect();
+        if (rect.width > 0) {
+          let tempMemoImg = memoCanvas.toDataURL();
+          memoCanvas.width = rect.width;
+          memoCanvas.height = Math.max(rect.height, 200);
+          restoreCanvasImage(memoCtx, memoCanvas, tempMemoImg);
+        }
+      }
+    }
+
+    function restoreCanvasImage(cContext, cCanvas, dataUrl) {
+      if (!dataUrl || dataUrl === "data:," || dataUrl.length < 50) return;
+      const img = new Image();
+      img.onload = () => {
+        cContext.drawImage(img, 0, 0, cCanvas.width, cCanvas.height);
+      };
+      img.src = dataUrl;
+    }
+
+    function togglePenMode() {
+      isPenMode = !isPenMode;
+      let btn = document.getElementById('togglePenBtn');
+      let badge = document.getElementById('penStatusBadge');
+      let cvs = document.getElementById('drawCanvas');
+
+      if (isPenMode) {
+        btn.className = "bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl cursor-pointer shadow";
+        badge.className = "text-xs font-bold text-amber-700 animate-pulse";
+        badge.textContent = "（現在：ペンON 🔥 線の上や数値を直接なぞって書き込めます）";
+        cvs.classList.add('active-pen');
+      } else {
+        btn.className = "bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3.5 py-2 rounded-xl cursor-pointer shadow";
+        badge.className = "text-xs font-bold text-slate-500";
+        badge.textContent = "（現在：OFF / 区分線や数値を動かせます）";
+        cvs.classList.remove('active-pen');
+      }
+    }
+
+    function setupCanvas(cvs, getD, setD, c, getE, getCol) {
+      if (!cvs || !c) return;
+
+      const getPos = (e) => {
+        let rect = cvs.getBoundingClientRect();
+        let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return { x: clientX - rect.left, y: clientY - rect.top };
+      };
+
+      cvs.onmousedown = (e) => {
+        if (e.button !== 0) return;
+        setD(true);
+        let p = getPos(e);
+        c.beginPath();
+        c.moveTo(p.x, p.y);
+      };
+
+      cvs.onmousemove = (e) => {
+        if (!getD() || (e.buttons & 1) === 0) {
+          setD(false);
+          return;
+        }
+        let p = getPos(e);
+        let eraser = getE();
+        c.lineWidth = eraser ? 20 : 3;
+        c.lineCap = 'round';
+        c.strokeStyle = eraser ? '#ffffff' : getCol();
+        c.globalCompositeOperation = eraser ? 'destination-out' : 'source-over';
+        c.lineTo(p.x, p.y);
+        c.stroke();
+      };
+
+      window.onmouseup = () => { setD(false); };
+
+      cvs.ontouchstart = (e) => {
+        setD(true);
+        let p = getPos(e);
+        c.beginPath();
+        c.moveTo(p.x, p.y);
+      };
+
+      cvs.ontouchmove = (e) => {
+        if (!getD()) return;
+        let touch = e.touches[0];
+        let rect = cvs.getBoundingClientRect();
+        let p = { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+        let eraser = getE();
+        c.lineWidth = eraser ? 20 : 3;
+        c.lineCap = 'round';
+        c.strokeStyle = eraser ? '#ffffff' : getCol();
+        c.globalCompositeOperation = eraser ? 'destination-out' : 'source-over';
+        c.lineTo(p.x, p.y);
+        c.stroke();
+      };
+
+      cvs.ontouchend = () => { setD(false); };
+    }
+
+    function setPenColor(color) { penColor = color; isEraser = false; document.getElementById('eraserBtn').classList.remove('bg-amber-500', 'text-white'); }
+    function toggleEraser() {
+      isEraser = !isEraser;
+      let btn = document.getElementById('eraserBtn');
+      if (isEraser) btn.classList.add('bg-amber-500', 'text-white');
+      else btn.classList.remove('bg-amber-500', 'text-white');
+    }
+
+    function setMemoPenColor(color) { memoPenColor = color; isMemoEraser = false; document.getElementById('memoEraserBtn').classList.remove('bg-amber-500', 'text-white'); }
+    function toggleMemoEraser() {
+      isMemoEraser = !isMemoEraser;
+      let btn = document.getElementById('memoEraserBtn');
+      if (isMemoEraser) btn.classList.add('bg-amber-500', 'text-white');
+      else btn.classList.remove('bg-amber-500', 'text-white');
+    }
+
+    function clearCanvas() { if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    function clearMemoCanvas() { if (memoCtx && memoCanvas) memoCtx.clearRect(0, 0, memoCanvas.width, memoCanvas.height); }
+
+    /* --- ブラウザ内部への保存機能 --- */
+    function saveToBrowser() {
+      let answers = [];
+      bars.forEach((_, i) => {
+        let el = document.getElementById(`ans_${i}`);
+        answers.push(el ? el.value : "");
+      });
+
+      const drawData = canvas ? canvas.toDataURL() : null;
+      const memoData = memoCanvas ? memoCanvas.toDataURL() : null;
+
+      const data = {
+        title: document.getElementById('problemInput').value.trim() || `無題の線分図 (${new Date().toLocaleTimeString()})`,
+        timestamp: new Date().toLocaleString(),
+        problem: document.getElementById('problemInput').value,
+        unit: document.getElementById('unitInput').value,
+        targetTotal: document.getElementById('targetTotal').value,
+        bars: bars,
+        answers: answers,
+        drawCanvasImage: drawData,
+        memoCanvasImage: memoData
+      };
+
+      let savedList = JSON.parse(localStorage.getItem('line_diagram_saves') || '[]');
+      savedList.unshift(data);
+      if (savedList.length > 20) savedList.pop();
+
+      try {
+        localStorage.setItem('line_diagram_saves', JSON.stringify(savedList));
+        alert('【保存完了】現在の画面と手書きメモをブラウザに保存しました！');
+      } catch (e) {
+        alert('保存容量の上限を超えました。');
+      }
+    }
+
+    /* --- 保存リストの表示・読込機能 --- */
+    function openLoadModal() {
+      const container = document.getElementById('savedListContainer');
+      container.innerHTML = '';
+
+      let savedList = JSON.parse(localStorage.getItem('line_diagram_saves') || '[]');
+
+      if (savedList.length === 0) {
+        container.innerHTML = `<p class="text-xs text-slate-500 text-center py-6">保存されたデータはまだありません。</p>`;
+      } else {
+        savedList.forEach((item, index) => {
+          let div = document.createElement('div');
+          div.className = "flex items-center justify-between bg-slate-50 hover:bg-indigo-50 border border-slate-200 p-3 rounded-xl transition cursor-pointer";
+          div.onclick = function() { loadSavedData(index); };
+          div.innerHTML = `
+            <div class="flex-1 overflow-hidden pr-2">
+              <div class="font-bold text-sm text-slate-800 truncate">${escapeHtml(item.title)}</div>
+              <div class="text-[10px] text-slate-500">保存日時: ${item.timestamp}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="event.stopPropagation(); loadSavedData(${index});" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg">開く</button>
+              <button type="button" onclick="deleteSavedData(event, ${index});" class="bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs px-2.5 py-1.5 rounded-lg" title="削除"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          `;
+          container.appendChild(div);
+        });
+      }
+
+      document.getElementById('loadModal').classList.remove('hidden');
+    }
+
+    function closeLoadModal() {
+      document.getElementById('loadModal').classList.add('hidden');
+    }
+
+    function loadSavedData(index) {
+      let savedList = JSON.parse(localStorage.getItem('line_diagram_saves') || '[]');
+      let data = savedList[index];
+      if (!data) return;
+
+      document.getElementById('problemInput').value = data.problem || data.title || '';
+      document.getElementById('unitInput').value = data.unit || '個';
+      document.getElementById('targetTotal').value = data.targetTotal || '';
+      
+      if (data.bars && Array.isArray(data.bars)) {
+        bars = data.bars;
+      }
+      render();
+
+      if (data.answers && Array.isArray(data.answers)) {
+        data.answers.forEach((ans, i) => {
+          let el = document.getElementById(`ans_${i}`);
+          if (el) el.value = ans;
+        });
+      }
+
+      clearCanvas();
+      clearMemoCanvas();
+
+      if (data.drawCanvasImage && ctx && canvas) {
+        restoreCanvasImage(ctx, canvas, data.drawCanvasImage);
+      }
+      if (data.memoCanvasImage && memoCtx && memoCanvas) {
+        restoreCanvasImage(memoCtx, memoCanvas, data.memoCanvasImage);
+      }
+
+      closeLoadModal();
+    }
+
+    function deleteSavedData(event, index) {
+      if (event) event.stopPropagation();
+      if (!confirm('この保存データを削除しますか？')) return;
+      let savedList = JSON.parse(localStorage.getItem('line_diagram_saves') || '[]');
+      savedList.splice(index, 1);
+      localStorage.setItem('line_diagram_saves', JSON.stringify(savedList));
+      openLoadModal();
+    }
+
+    /* --- PDF形式出力 / 印刷 --- */
+    function exportToPDF() {
+      window.print();
+    }
+
+    function render() {
+      const container = document.getElementById('diagramContainer');
+      const unit = document.getElementById('unitInput').value || '個';
+      container.innerHTML = '';
+
+      let totalSum = 0;
+      bars.forEach((bar, bIdx) => {
+        bar.values.forEach(v => {
+          let num = parseFloat(v);
+          if (!isNaN(num)) totalSum += num;
+        });
+
+        const card = document.createElement('div');
+        card.className = "line-card";
+
+        let header = document.createElement('div');
+        header.className = "flex flex-wrap items-center justify-between gap-2 mb-2";
+        header.innerHTML = `
+          <input type="text" value="${escapeHtml(bar.label)}" placeholder="項目名" oninput="updateLabel(${bIdx}, this.value)" class="font-bold text-base border px-2.5 py-1 rounded-lg w-36 bg-slate-50">
+          <div class="flex gap-2 no-print">
+            <button type="button" onclick="addDivider(${bIdx})" class="bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-amber-300 cursor-pointer">区分線追加</button>
+            <button type="button" onclick="removeDivider(${bIdx})" class="bg-slate-100 hover:bg-slate-200 text-xs font-bold px-2.5 py-1.5 rounded-lg border cursor-pointer">区分線削除</button>
+            <button type="button" onclick="removeBar(${bIdx})" class="bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-rose-300 cursor-pointer">削除</button>
+          </div>
+        `;
+        card.appendChild(header);
+
+        let trackWrapper = document.createElement('div');
+        trackWrapper.className = "track-wrapper";
+        trackWrapper.id = `track_${bIdx}`;
+
+        let track = document.createElement('div');
+        track.className = "track";
+        trackWrapper.appendChild(track);
+
+        let sortedDivs = [0, ...bar.dividers.slice().sort((a,b)=>a-b), 1];
+        for (let i = 0; i < sortedDivs.length - 1; i++) {
+          let center = (sortedDivs[i] + sortedDivs[i+1]) / 2;
+          let val = bar.values[i] !== undefined ? bar.values[i] : "";
+
+          let labelBox = document.createElement('div');
+          labelBox.className = "seg-label";
+          labelBox.style.left = `${center * 100}%`;
+          labelBox.innerHTML = `
+            <div class="flex items-center bg-white border-2 border-teal-500 rounded-lg shadow px-2 py-1 gap-1">
+              <input type="number" value="${val}" placeholder="?" oninput="updateVal(${bIdx}, ${i}, this.value)" class="w-16 text-center font-bold text-sm focus:outline-none">
+              <span class="text-xs text-slate-500">${escapeHtml(unit)}</span>
+            </div>
+          `;
+          trackWrapper.appendChild(labelBox);
+        }
+
+        bar.dividers.forEach((dPos, dIdx) => {
+          let divLine = document.createElement('div');
+          divLine.className = "divider";
+          divLine.style.left = `${dPos * 100}%`;
+          trackWrapper.appendChild(divLine);
+
+          let handle = document.createElement('div');
+          handle.className = "handle no-print";
+          handle.style.left = `${dPos * 100}%`;
+          
+          handle.onmousedown = (e) => {
+            if (e.button !== 0 || isPenMode) return;
+            e.stopPropagation();
+            activeDrag = { bIdx, dIdx };
+          };
+          handle.ontouchstart = (e) => {
+            if (isPenMode) return;
+            e.stopPropagation();
+            activeDrag = { bIdx, dIdx };
+          };
+
+          trackWrapper.appendChild(handle);
+        });
+
+        card.appendChild(trackWrapper);
+        container.appendChild(card);
+      });
+
+      document.getElementById('autoSumDisplay').value = totalSum;
+      checkMatch();
+      renderAnswerInputs();
+      setTimeout(resizeCanvases, 50);
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    function updateLabel(bIdx, val) { bars[bIdx].label = val; renderAnswerInputs(); }
+    function updateVal(bIdx, sIdx, val) { 
+      bars[bIdx].values[sIdx] = val === "" ? "" : parseFloat(val); 
+      document.getElementById('autoSumDisplay').value = calculateTotal(); 
+      checkMatch(); 
+    }
+    function calculateTotal() {
+      let sum = 0;
+      bars.forEach(b => b.values.forEach(v => { let n = parseFloat(v); if(!isNaN(n)) sum += n; }));
+      return sum;
+    }
+
+    function addBar() {
+      bars.push({ label: `項目${bars.length+1}`, dividers: [], values: [""] });
+      render();
+    }
+    function removeBar(bIdx) {
+      if(bars.length <= 1) { alert("最低1本必要です"); return; }
+      bars.splice(bIdx, 1);
+      render();
+    }
+    function addDivider(bIdx) {
+      let bar = bars[bIdx];
+      if(bar.dividers.length >= 5) { alert("区分線は最大5本です"); return; }
+      
+      let newPos = 0.5;
+      if (bar.dividers.length > 0) {
+        let sorted = [...bar.dividers].sort((a,b)=>a-b);
+        newPos = (sorted[sorted.length-1] + 1.0) / 2;
+        if (newPos > 0.9) newPos = sorted[0] / 2;
+      }
+      
+      bar.dividers.push(newPos);
+      bar.dividers.sort((a,b)=>a-b);
+      bar.values = Array(bar.dividers.length + 1).fill("");
+      render();
+    }
+    function removeDivider(bIdx) {
+      let bar = bars[bIdx];
+      if(bar.dividers.length === 0) return;
+      bar.dividers.pop();
+      bar.values = Array(bar.dividers.length + 1).fill("");
+      render();
+    }
+
+    function checkMatch() {
+      let target = parseFloat(document.getElementById('targetTotal').value);
+      let sum = parseFloat(document.getElementById('autoSumDisplay').value);
+      let alertBox = document.getElementById('matchAlert');
+      let unit = document.getElementById('unitInput').value || '個';
+
+      if(isNaN(target)) {
+        alertBox.className = "p-3 rounded-xl font-bold text-xs bg-slate-100 text-slate-600 border border-slate-200";
+        alertBox.textContent = `現在の合計: ${sum}${unit}`;
+        return;
+      }
+      if(Math.abs(target - sum) < 0.01) {
+        alertBox.className = "p-3 rounded-xl font-bold text-xs bg-emerald-100 text-emerald-900 border border-emerald-300";
+        alertBox.textContent = `✅ 一致しています！（合計: ${sum}${unit} ＝ 目標: ${target}${unit}）`;
+      } else {
+        alertBox.className = "p-3 rounded-xl font-bold text-xs bg-rose-100 text-rose-900 border border-rose-300";
+        alertBox.textContent = `⚠️ 不一致です（合計: ${sum}${unit} ≠ 目標: ${target}${unit}）`;
+      }
+    }
+
+    function renderAnswerInputs() {
+      let container = document.getElementById('answerInputsContainer');
+      let unit = document.getElementById('unitInput').value || '個';
+      container.innerHTML = '';
+      bars.forEach((b, i) => {
+        let name = b.label.trim() || `項目${i+1}`;
+        let div = document.createElement('div');
+        div.className = "flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200";
+        div.innerHTML = `<span class="text-xs font-bold">${escapeHtml(name)}:</span><input type="number" id="ans_${i}" placeholder="?" class="w-20 text-center font-bold text-sm border border-slate-300 rounded bg-white py-1"><span class="text-xs">${escapeHtml(unit)}</span>`;
+        container.appendChild(div);
+      });
+    }
+
+    function checkAnswers() {
+      let sum = 0;
+      let hasVal = false;
+      bars.forEach((_, i) => {
+        let el = document.getElementById(`ans_${i}`);
+        if(el && el.value !== "") {
+          sum += parseFloat(el.value) || 0;
+          hasVal = true;
+        }
+      });
+      let resBox = document.getElementById('answerResult');
+      resBox.classList.remove('hidden');
+      let unit = document.getElementById('unitInput').value || '個';
+      if(!hasVal) {
+        resBox.className = "p-3 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300";
+        resBox.textContent = "答えを入力してください。";
+        return;
+      }
+      resBox.className = "p-3 rounded-xl text-xs font-bold bg-teal-50 text-teal-900 border border-teal-300";
+      resBox.textContent = `📊 記入された答えの合計: ${sum}${unit}`;
+    }
+
+    function resetAll() {
+      bars = [{ label: "兄", dividers: [], values: [70] }, { label: "弟", dividers: [], values: [50] }];
+      document.getElementById('problemInput').value = "";
+      document.getElementById('targetTotal').value = "";
+      clearCanvas();
+      clearMemoCanvas();
+      render();
+    }
+
+    window.onmousemove = (e) => {
+      if(!activeDrag || isPenMode) return;
+      if((e.buttons & 1) === 0) {
+        activeDrag = null;
+        return;
+      }
+      let track = document.getElementById(`track_${activeDrag.bIdx}`);
+      if(!track) return;
+      let rect = track.getBoundingClientRect();
+      let ratio = (e.clientX - rect.left) / rect.width;
+      ratio = Math.max(0.05, Math.min(0.95, ratio));
+      bars[activeDrag.bIdx].dividers[activeDrag.dIdx] = ratio;
+      bars[activeDrag.bIdx].dividers.sort((a,b)=>a-b);
+      render();
+    };
+    window.onmouseup = () => { activeDrag = null; };
+
+    window.onload = init;
+    window.onresize = resizeCanvases;
+  </script>
+</body>
+</html>
